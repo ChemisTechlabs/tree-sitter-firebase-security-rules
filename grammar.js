@@ -1,25 +1,26 @@
 module.exports = grammar({
   name: "firebase_rules",
 
-  rules: {
-    source_file: ($) => repeat($.rule_declaration),
+  extras: ($) => [$.comment, /\s/],
 
-    rule_declaration: ($) =>
-      seq(
-        "rules_version",
-        "=",
-        $.string,
-        ";",
-        "service",
-        $.identifier,
-        "{",
-        repeat($.match_block),
-        "}",
-      ),
+  rules: {
+    source_file: ($) => seq($.rule_declaration, $.service_declaration),
+
+    rule_declaration: ($) => seq("rules_version", "=", $.string, ";"),
+
+    service_declaration: ($) =>
+      seq("service", $.service_name, "{", repeat($.match_block), "}"),
 
     match_block: ($) => seq("match", $.path, "{", repeat($.rule), "}"),
 
-    path: ($) => /\/[^{]+/,
+    path: ($) =>
+      seq(
+        "/",
+        choice($.segment, $.identifier),
+        repeat(seq("/", choice($.segment, $.identifier))),
+      ),
+
+    segment: ($) => seq("{", $.identifier, optional("=**"), "}"),
 
     rule: ($) => choice($.allow_rule, $.function_declaration, $.match_block),
 
@@ -54,13 +55,20 @@ module.exports = grammar({
     return_statement: ($) => seq("return", $.expression, ";"),
 
     expression: ($) =>
-      choice(
-        $.binary_expression,
-        $.function_call,
-        $.identifier,
-        $.string,
-        $.number,
-        $.boolean,
+      prec.left(
+        1,
+        choice(
+          $.field_access,
+          $.binary_expression,
+          $.ternary_expression,
+          $.function_call,
+          $.identifier,
+          $.string,
+          $.number,
+          $.boolean,
+          $.array,
+          $.index_call,
+        ),
       ),
 
     binary_expression: ($) =>
@@ -68,21 +76,69 @@ module.exports = grammar({
         1,
         seq(
           $.expression,
-          choice("&&", "||", "==", "!=", "<", ">", "<=", ">="),
+          choice(
+            "&&",
+            "||",
+            "==",
+            "!=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "+",
+            "-",
+            "/",
+            "*",
+            "%",
+            "in",
+            "is",
+          ),
           $.expression,
         ),
       ),
 
+    ternary_expression: ($) =>
+      prec.left(1, seq($.expression, "?", $.expression, ":", $.expression)),
+
     function_call: ($) =>
-      seq($.identifier, "(", optional($.argument_list), ")"),
+      seq(
+        $.identifier,
+        "(",
+        optional(choice($.argument_list, $.database_path)),
+        ")",
+      ),
+
+    index_call: ($) => seq($.identifier, "[", $.expression, "]"),
 
     argument_list: ($) => seq($.expression, repeat(seq(",", $.expression))),
+    database_path: ($) =>
+      seq(
+        "/databases/",
+        "$(database)",
+        repeat(seq("/", choice($.identifier, seq("$(", $.expression, ")")))),
+      ),
+    field_access: ($) =>
+      prec.left(
+        2,
+        seq(
+          choice($.identifier, $.function_call),
+          repeat1(seq(".", choice($.identifier, $.function_call))),
+        ),
+      ),
 
-    identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_]*/,
+    identifier: ($) => prec(0, /[a-zA-Z_][a-zA-Z0-9_]*/),
     string: ($) => /'[^']*'|"[^"]*"/,
     number: ($) => /\d+/,
     boolean: ($) => choice("true", "false"),
+    array: ($) =>
+      seq(
+        "[",
+        optional($.expression),
+        optional(repeat(seq(",", $.expression))),
+        "]",
+      ),
 
+    service_name: ($) => choice("cloud.firestore", "firebase.storage"),
     comment: ($) =>
       token(
         choice(seq("//", /.*/), seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")),
