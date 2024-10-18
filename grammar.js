@@ -47,7 +47,29 @@ module.exports = grammar({
     parameter_list: ($) => seq($.identifier, repeat(seq(",", $.identifier))),
 
     statement: ($) =>
-      choice($.variable_declaration, $.return_statement, $.expression),
+      choice(
+        $.variable_declaration,
+        $.return_statement,
+        $.expression,
+        $.if_statement,
+      ),
+
+    if_statement: ($) =>
+      seq(
+        "if",
+        "(",
+        $.expression,
+        ")",
+        "{",
+        repeat($.statement),
+        "}",
+        optional(
+          seq(
+            "else",
+            choice(seq("{", repeat($.statement), "}"), $.if_statement),
+          ),
+        ),
+      ),
 
     variable_declaration: ($) =>
       seq(choice("let", "const"), $.identifier, "=", $.expression, ";"),
