@@ -49,6 +49,7 @@ module.exports = grammar({
     statement: ($) =>
       choice(
         $.variable_declaration,
+        $.variable_attribution,
         $.return_statement,
         $.expression,
         $.if_statement,
@@ -73,6 +74,8 @@ module.exports = grammar({
 
     variable_declaration: ($) =>
       seq(choice("let", "const"), $.identifier, "=", $.expression, ";"),
+
+    variable_attribution: ($) => seq($.identifier, "=", $.expression, ";"),
 
     return_statement: ($) => seq("return", $.expression, ";"),
 
