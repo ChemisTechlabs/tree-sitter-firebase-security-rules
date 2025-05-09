@@ -1,0 +1,37 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "firebase_rules",
+      "camelcase": "FirebaseRules",
+      "scope": "source.firebase_rules",
+      "file-types": ["rules"],
+      "injection-regex": "^firebase_rules$",
+      "class-name": "TreeSitterFirebaseRules"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "BSD-2-Clause",
+    "description": "Firebase Security Rules Grammar",
+    "authors": [
+      {
+        "name": "Chemis Techlabs",
+        "email": "gcaldas@chemis.tech",
+        "url": "https://chemis.tech/"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/ChemisTechlabs/tree-sitter-firebase-security-rules"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "node": true,
+    "python": false,
+    "rust": true,
+    "swift": false,
+    "zig": false
+  }
+}
