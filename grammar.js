@@ -1,355 +1,223 @@
-/**
- * Tree-sitter grammar for Firebase Security Rules
- *
- * This grammar handles the syntax for Firebase Security Rules which are used to
- * define access control and data validation rules for Firebase services.
- */
+/// <reference types="tree-sitter-cli/dsl" />
+// @ts-check
 module.exports = grammar({
   name: "firebase_rules",
-
-  /**
-   * Elements to be ignored during parsing
-   */
   extras: ($) => [$.comment, /\s/],
-
+  // word: ($) => $.identifier,
+  conflicts: ($) => [[$.call_expression, $.access_expression]],
   rules: {
-    /**
-     * The root node of the grammar
-     * A Firebase Rules file consists of a version declaration followed by service declarations
-     */
-    source_file: ($) => seq($.rule_declaration, $.service_declaration),
+    source_file: ($) => seq($.version_definition, $.service_definition),
 
-    /**
-     * Declares the rules version, e.g. rules_version = '2';
-     */
-    rule_declaration: ($) => seq("rules_version", "=", $.string, ";"),
+    //  rules_version = '2';
+    version_definition: ($) => seq("rules_version", "=", $.string, ";"),
 
-    /**
-     * Declares a Firebase service and its rules
-     * Example: service cloud.firestore { ... }
-     */
-    service_declaration: ($) =>
-      seq("service", $.service_name, "{", repeat($.match_block), "}"),
+    // service cloud.firestore { ... }
+    service_definition: ($) => seq("service", $.service_name, $.service_block),
 
-    /**
-     * Match blocks define rules for specific paths in the database
-     * Example: match /users/{userId} { ... }
-     */
-    match_block: ($) => seq("match", $.match_path, "{", repeat($.rule), "}"),
+    service_block: ($) =>
+      seq("{", repeat(choice($.match_definition, $.function_definition)), "}"),
 
-    /**
-     * The path pattern in a match block
-     * Can include static segments and path variables (segments)
-     */
-    match_path: ($) =>
+    // match /databases/{database}/documents { ... }
+    // match /documents/{doc} { ... }
+    match_definition: ($) => seq("match", $.path, $.match_block),
+
+    match_block: ($) =>
       seq(
-        "/",
-        choice($.segment, $.identifier),
-        repeat(seq("/", choice($.segment, $.identifier))),
-      ),
-
-    /**
-     * Path variable in a match pattern, e.g. {userId} or {docId=**}
-     * The =** suffix matches all descendants
-     */
-    segment: ($) => seq("{", $.identifier, optional("=**"), "}"),
-
-    /**
-     * A rule can be an allow statement, function declaration, or nested match block
-     */
-    rule: ($) => choice($.allow_rule, $.function_declaration, $.match_block),
-
-    /**
-     * Allow rule defines permissions, e.g. allow read, write: if true;
-     */
-    allow_rule: ($) =>
-      seq("allow", $.method_sequence, ":", "if", $.expression, ";"),
-
-    /**
-     * A sequence of methods for an allow rule, e.g. read, write or get, list
-     */
-    method_sequence: ($) => seq($.method, repeat(seq(",", $.method))),
-
-    /**
-     * Access methods that can be allowed or denied
-     * read = get, list; write = create, update, delete
-     */
-    method: (_) =>
-      choice("get", "list", "create", "update", "delete", "read", "write"),
-
-    /**
-     * Custom function declaration for reusable rule logic
-     */
-    function_declaration: ($) =>
-      seq(
-        "function",
-        $.identifier,
-        "(",
-        optional($.parameter_list),
-        ")",
         "{",
-        repeat($.statement),
-        $.return_statement,
+        repeat(
+          choice($.rule_definition, $.function_definition, $.match_definition),
+        ),
         "}",
       ),
 
-    /**
-     * Function parameters list
-     */
-    parameter_list: ($) => seq($.identifier, repeat(seq(",", $.identifier))),
+    // function myFunction(param1, param2) { ... }
+    // function test() { ... }
+    function_definition: ($) =>
+      seq("function", $.identifier, $.parameters_list, $.function_block),
 
-    /**
-     * A statement within a function body
-     */
-    statement: ($) =>
+    parameters_list: ($) => seq("(", optional($._list), ")"),
+
+    function_block: ($) => seq("{", repeat1($._statement), "}"),
+
+    // return 1 is number;
+    return_statement: ($) => seq("return", $._expression, ";"),
+
+    // allow read: if true;
+    // allow update: if request.auth != null;
+    // allow create, delete: if isAdmin() || canCreate();
+    rule_definition: ($) =>
+      seq(
+        "allow",
+        seq($._rule, repeat(seq(",", $._rule))),
+        ":",
+        "if",
+        $._expression,
+        ";",
+      ),
+
+    _rule: () =>
+      choice("read", "write", "create", "update", "delete", "get", "list"),
+
+    // any kind of expression
+    _expression: ($) =>
+      choice(
+        $.identifier,
+        $._primitives,
+        $.index_expression,
+        $.call_expression,
+        $.access_expression,
+        $.unary_expression,
+        $.binary_expression,
+        $.ternary_expression,
+      ),
+
+    // list[index]
+    // list[1]
+    index_expression: ($) => seq($._expression, "[", $._expression, "]"),
+
+    // call()
+    call_expression: ($) => seq($._expression, $.parameters_list),
+
+    // foo.bar
+    // foo.call()
+    // foo.bar[0].call()
+    // call().foo
+    access_expression: ($) =>
+      seq($._expression, repeat1(seq(".", $._expression))),
+
+    // !foo()
+    // -10
+    unary_expression: ($) =>
+      prec(2, choice(seq("!", $._expression), seq("-", $._expression))),
+
+    // 1 * 2
+    // foo > bar
+    // a && b
+    binary_expression: ($) =>
+      choice(
+        $.multiplicative_operation,
+        $.additive_operation,
+        $.relational_operation,
+        $.existence_operation,
+        $.type_operation,
+        $.comparison_operation,
+        $.conditional_and_operation,
+        $.conditional_or_operation,
+      ),
+
+    multiplicative_operation: ($) =>
+      choice(
+        seq($._expression, "/", $._expression),
+        seq($._expression, "%", $._expression),
+        seq($._expression, "*", $._expression),
+      ),
+
+    additive_operation: ($) =>
+      choice(
+        seq($._expression, "+", $._expression),
+        seq($._expression, "-", $._expression),
+      ),
+
+    relational_operation: ($) =>
+      choice(
+        seq($._expression, ">", $._expression),
+        seq($._expression, ">=", $._expression),
+        seq($._expression, "<", $._expression),
+        seq($._expression, "<=", $._expression),
+      ),
+
+    existence_operation: ($) => choice(seq($._expression, "in", $._expression)),
+
+    type_operation: ($) => choice(seq($._expression, "is", $._type)),
+
+    comparison_operation: ($) =>
+      choice(
+        seq($._expression, "==", $._expression),
+        seq($._expression, "!=", $._expression),
+      ),
+
+    conditional_and_operation: ($) =>
+      choice(seq($._expression, "&&", $._expression)),
+
+    conditional_or_operation: ($) =>
+      choice(seq($._expression, "||", $._expression)),
+
+    // foo == true ? x() : y()
+    ternary_expression: ($) =>
+      prec.left(3, seq($._expression, "?", $._expression, ":", $._expression)),
+
+    // any kind of statement
+    _statement: ($) =>
       choice(
         $.variable_declaration,
         $.variable_attribution,
-        $.expression,
-        $.if_statement,
+        $.return_statement,
       ),
 
-    /**
-     * If-else statement for conditional logic
-     */
-    if_statement: ($) =>
+    // let foo = 1;
+    // let bar = get();
+    variable_declaration: ($) =>
+      seq("let", $.identifier, "=", $._expression, ";"),
+
+    // foo = 2;
+    variable_attribution: ($) => seq($.identifier, "=", $._expression, ";"),
+
+    // /databases/{database}/documents
+    // /databases/(default)/documents/users/$(request.auth.uid)
+    // /b/{bucket}/o
+    // /{allPaths=**}
+    path: ($) => repeat1($.path_segment),
+
+    path_segment: ($) =>
+      choice(
+        seq("/", $.segment_identifier),
+        seq("/", "{", $.segment_identifier, optional("=**"), "}"),
+        seq("/", "(", $.segment_identifier, ")"),
+        seq("/", "$(", $._expression, ")"),
+      ),
+
+    // primitive types
+    _primitives: ($) => choice($.string, $.number, $.boolean, $.list, $.map),
+
+    // "string"
+    string: ($) => /'[^']*'|"[^"]*"/,
+
+    // 1
+    // 2.1
+    number: ($) => /(\d+|\d+\.\d+)/,
+
+    // true
+    // false
+    boolean: ($) => choice("true", "false"),
+
+    // []
+    // [1, 2, 3]
+    list: ($) => seq("[", optional($._list), "]"),
+
+    // {}
+    // {"a":1, "b":2 }
+    map: ($) => seq("{", optional(seq($.key_value)), "}"),
+    key_value: ($) =>
       seq(
-        "if",
-        "(",
-        $.expression,
-        ")",
-        "{",
-        repeat($.statement),
-        "}",
-        optional(
+        field("key", $.string),
+        ":",
+        field("value", $._expression),
+        repeat(
           seq(
-            "else",
-            choice(seq("{", repeat($.statement), "}"), $.if_statement),
+            ",",
+            field("key", $.identifier),
+            ":",
+            field("value", $._expression),
           ),
         ),
+        optional(","),
       ),
 
-    /**
-     * Variable declaration using let or const
-     */
-    variable_declaration: ($) =>
-      seq(choice("let", "const"), $.identifier, "=", $.expression, ";"),
+    // 1, 2, 3
+    // a, b, c
+    _list: ($) => seq($._expression, repeat(seq(",", $._expression))),
 
-    /**
-     * Variable assignment
-     */
-    variable_attribution: ($) => seq($.identifier, "=", $.expression, ";"),
-
-    /**
-     * Return statement in a function
-     */
-    return_statement: ($) => seq("return", $.expression, ";"),
-
-    /**
-     * Expression - the building block of rule conditions
-     */
-    expression: ($) =>
-      prec.left(
-        1,
-        choice(
-          $.field_access,
-          $.operators,
-          $.scoped_firestore_function,
-          $.built_in_variable,
-          $.identifier,
-          $.string,
-          $.number,
-          $.boolean,
-          $.array,
-          $.map,
-        ),
-      ),
-
-    /**
-     * Various operators used in expressions
-     */
-    operators: ($) =>
-      choice(
-        $.operator_index,
-        $.operator_call,
-        $.operator_unary_negation,
-        $.operator_multiplicative,
-        $.operator_additive,
-        $.operator_relational,
-        $.operator_existence_in,
-        $.operator_type_comparison,
-        $.operator_comparison,
-        $.operator_and,
-        $.operator_or,
-        $.operator_ternary,
-      ),
-
-    /**
-     * Array or map indexing operation, e.g. users[userId]
-     */
-    operator_index: ($) =>
-      seq($.expression, choice($.array_access, $.map_access)),
-
-    /**
-     * Function call operation
-     */
-    operator_call: ($) =>
-      seq($.expression, "(", optional(choice($.argument_list)), ")"),
-
-    /**
-     * Unary negation: logical (!) or arithmetic (-)
-     */
-    operator_unary_negation: ($) => seq(choice("!", "-"), $.expression),
-
-    /**
-     * Multiplicative operators: *, /, %
-     */
-    operator_multiplicative: ($) =>
-      seq($.expression, choice("/", "%", "*"), $.expression),
-
-    /**
-     * Additive operators: +, -
-     */
-    operator_additive: ($) => seq($.expression, choice("+", "-"), $.expression),
-
-    /**
-     * Relational operators: >, <, >=, <=
-     */
-    operator_relational: ($) =>
-      seq($.expression, choice(">", "<", ">=", "<="), $.expression),
-
-    /**
-     * Membership testing with 'in' operator
-     */
-    operator_existence_in: ($) => seq($.expression, "in", $.expression),
-
-    /**
-     * Type checking with 'is' operator
-     */
-    operator_type_comparison: ($) => seq($.expression, "is", $.type),
-
-    /**
-     * Equality operators: ==, !=
-     */
-    operator_comparison: ($) =>
-      seq($.expression, choice("==", "!="), $.expression),
-
-    /**
-     * Logical AND operator
-     */
-    operator_and: ($) => seq($.expression, "&&", $.expression),
-
-    /**
-     * Logical OR operator
-     */
-    operator_or: ($) => seq($.expression, "||", $.expression),
-
-    /**
-     * Ternary conditional operator
-     */
-    operator_ternary: ($) =>
-      seq($.expression, "?", $.expression, ":", $.expression),
-
-    /**
-     * Firestore built-in functions: get(), exists(), path()
-     */
-    scoped_firestore_function: ($) =>
-      seq(choice("get", "exists", "path"), "(", $.path, ")"),
-
-    /**
-     * Firebase Rules built-in variables
-     */
-    built_in_variable: ($) => choice($.request_object, $.resource_object),
-
-    /**
-     * The resource object represents the requested document
-     */
-    resource_object: ($) => seq("resource", $.map_access),
-
-    /**
-     * The request object contains details about the current request
-     */
-    request_object: ($) =>
-      seq(
-        "request",
-        ".",
-        choice(
-          $.request_auth,
-          field("request_method", "method"),
-          $.request_params,
-          field("request_path", "path"),
-          $.request_query,
-          $.request_resource,
-          $.request_time,
-        ),
-      ),
-
-    /**
-     * Authentication information about the client making the request
-     */
-    request_auth: ($) => seq("auth", optional($.map_access)),
-
-    /**
-     * Path parameters from the URL
-     */
-    request_params: ($) => seq("params", optional($.array_access)),
-
-    /**
-     * Query parameters from the URL
-     */
-    request_query: ($) => seq("query", optional($.map_access)),
-
-    /**
-     * The resource being written (for write operations)
-     */
-    request_resource: ($) => seq("resource", optional($.field_access)),
-
-    /**
-     * The time when the request was received
-     */
-    request_time: ($) => seq("time", optional($.field_access)),
-
-    /**
-     * Function arguments list
-     */
-    argument_list: ($) => seq($.expression, repeat(seq(",", $.expression))),
-
-    /**
-     * Access to object fields using dot notation
-     */
-    field_access: ($) =>
-      prec.left(
-        11,
-        seq(
-          choice($.identifier, $.boolean, $.number, $.string, $.array, $.map),
-          repeat1(seq(".", choice($.identifier, $.operator_call))),
-        ),
-      ),
-
-    /**
-     * Variable or function identifier
-     */
-    identifier: (_) => prec(0, /[a-zA-Z_][a-zA-Z0-9_]*/),
-
-    /**
-     * String literal, supports both single and double quotes
-     */
-    string: (_) => /'[^']*'|"[^"]*"/,
-
-    /**
-     * Numeric literal
-     */
-    number: (_) => /\d+/,
-
-    /**
-     * Boolean literal: true or false
-     */
-    boolean: (_) => choice("true", "false"),
-
-    /**
-     * Type literals for use with 'is' operator
-     */
-    type: (_) =>
+    _type: ($) =>
       choice(
         "bool",
         "int",
@@ -364,59 +232,11 @@ module.exports = grammar({
         "latlng",
       ),
 
-    /**
-     * Array literal
-     */
-    array: ($) =>
-      seq(
-        "[",
-        optional($.expression),
-        optional(repeat(seq(",", $.expression))),
-        "]",
-      ),
+    service_name: ($) => choice("cloud.firestore", "firebase.storage"),
 
-    /**
-     * Map/object literal
-     */
-    map: ($) =>
-      seq(
-        "{",
-        optional(seq($.string, ":", $.expression)),
-        optional(repeat(seq(",", $.string, ":", $.expression))),
-        "}",
-      ),
-
-    /**
-     * Array index access using bracketed numeric index
-     */
-    array_access: ($) => seq("[", field("index", $.number), "]"),
-
-    /**
-     * Map property access using either bracket notation or dot notation
-     */
-    map_access: ($) =>
-      choice(seq("[", field("key", $.expression), "]"), seq(".", $.expression)),
-
-    /**
-     * Database document path format
-     */
-    path: ($) =>
-      seq(
-        "/databases/",
-        optional("$"),
-        "(database)",
-        repeat(seq("/", choice($.identifier, seq("$(", $.expression, ")")))),
-      ),
-
-    /**
-     * Firebase service name
-     */
-    service_name: (_) => choice("cloud.firestore", "firebase.storage"),
-
-    /**
-     * Comments: both line comments and block comments
-     */
-    comment: (_) =>
+    segment_identifier: ($) => prec(0, /[a-zA-Z\s\-\_\.]+/),
+    identifier: ($) => prec(0, /[a-zA-Z_][a-zA-Z0-9_]*/),
+    comment: ($) =>
       token(
         choice(seq("//", /.*/), seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")),
       ),
