@@ -1,10 +1,15 @@
+/**
+ * @file Firebase Security Rules grammar for tree-sitter
+ * @author Guilherme Caldas <gcaldas@chemis.tech>
+ * @license BSD-3-Clause
+ */
+
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 module.exports = grammar({
   name: "firebase_rules",
   extras: ($) => [$.comment, /\s/],
-  // word: ($) => $.identifier,
-  conflicts: ($) => [[$.call_expression, $.access_expression]],
+  conflicts: ($) => [[$._expression, $.access_expression]],
   rules: {
     source_file: ($) => seq($.version_definition, $.service_definition),
 
@@ -35,7 +40,7 @@ module.exports = grammar({
     function_definition: ($) =>
       seq("function", $.identifier, $.parameters_list, $.function_block),
 
-    parameters_list: ($) => seq("(", optional($._list), ")"),
+    parameters_list: ($) => seq("(", optional(choice($._list, $.path)), ")"),
 
     function_block: ($) => seq("{", repeat1($._statement), "}"),
 
@@ -48,21 +53,22 @@ module.exports = grammar({
     rule_definition: ($) =>
       seq(
         "allow",
-        seq($._rule, repeat(seq(",", $._rule))),
+        seq($.action, repeat(seq(",", $.action))),
         ":",
         "if",
         $._expression,
         ";",
       ),
 
-    _rule: () =>
+    action: () =>
       choice("read", "write", "create", "update", "delete", "get", "list"),
 
     // any kind of expression
     _expression: ($) =>
       choice(
         $.identifier,
-        $._primitives,
+        $.primitives,
+        $.parenthesized_expression,
         $.index_expression,
         $.call_expression,
         $.access_expression,
@@ -71,24 +77,47 @@ module.exports = grammar({
         $.ternary_expression,
       ),
 
+    // (1 + 1)
+    // ((i + 2) + 3)
+    parenthesized_expression: ($) => prec(18, seq("(", $._expression, ")")),
+
     // list[index]
     // list[1]
-    index_expression: ($) => seq($._expression, "[", $._expression, "]"),
+    index_expression: ($) =>
+      prec.left(15, seq($._expression, "[", $._expression, "]")),
 
     // call()
-    call_expression: ($) => seq($._expression, $.parameters_list),
+    call_expression: ($) =>
+      prec.left(19, choice($._expression, choice($.parameters_list))),
 
     // foo.bar
     // foo.call()
     // foo.bar[0].call()
     // call().foo
     access_expression: ($) =>
-      seq($._expression, repeat1(seq(".", $._expression))),
+      prec.left(
+        16,
+        seq(
+          choice(
+            $.identifier,
+            $.primitives,
+            $.parenthesized_expression,
+            $.index_expression,
+            $.call_expression,
+          ),
+          repeat1(
+            seq(
+              ".",
+              choice($.identifier, $.index_expression, $.call_expression),
+            ),
+          ),
+        ),
+      ),
 
     // !foo()
     // -10
     unary_expression: ($) =>
-      prec(2, choice(seq("!", $._expression), seq("-", $._expression))),
+      prec.left(14, choice(seq("!", $._expression), seq("-", $._expression))),
 
     // 1 * 2
     // foo > bar
@@ -106,45 +135,59 @@ module.exports = grammar({
       ),
 
     multiplicative_operation: ($) =>
-      choice(
-        seq($._expression, "/", $._expression),
-        seq($._expression, "%", $._expression),
-        seq($._expression, "*", $._expression),
+      prec.left(
+        13,
+        choice(
+          seq($._expression, "/", $._expression),
+          seq($._expression, "%", $._expression),
+          seq($._expression, "*", $._expression),
+        ),
       ),
 
     additive_operation: ($) =>
-      choice(
-        seq($._expression, "+", $._expression),
-        seq($._expression, "-", $._expression),
+      prec.left(
+        12,
+        choice(
+          seq($._expression, "+", $._expression),
+          seq($._expression, "-", $._expression),
+        ),
       ),
 
     relational_operation: ($) =>
-      choice(
-        seq($._expression, ">", $._expression),
-        seq($._expression, ">=", $._expression),
-        seq($._expression, "<", $._expression),
-        seq($._expression, "<=", $._expression),
+      prec.left(
+        11,
+        choice(
+          seq($._expression, ">", $._expression),
+          seq($._expression, ">=", $._expression),
+          seq($._expression, "<", $._expression),
+          seq($._expression, "<=", $._expression),
+        ),
       ),
 
-    existence_operation: ($) => choice(seq($._expression, "in", $._expression)),
+    existence_operation: ($) =>
+      prec.left(9, choice(seq($._expression, "in", $._expression))),
 
-    type_operation: ($) => choice(seq($._expression, "is", $._type)),
+    type_operation: ($) =>
+      prec.left(9, choice(seq($._expression, "is", $._type))),
 
     comparison_operation: ($) =>
-      choice(
-        seq($._expression, "==", $._expression),
-        seq($._expression, "!=", $._expression),
+      prec.left(
+        10,
+        choice(
+          seq($._expression, "==", $._expression),
+          seq($._expression, "!=", $._expression),
+        ),
       ),
 
     conditional_and_operation: ($) =>
-      choice(seq($._expression, "&&", $._expression)),
+      prec.left(8, choice(seq($._expression, "&&", $._expression))),
 
     conditional_or_operation: ($) =>
-      choice(seq($._expression, "||", $._expression)),
+      prec.left(7, choice(seq($._expression, "||", $._expression))),
 
     // foo == true ? x() : y()
     ternary_expression: ($) =>
-      prec.left(3, seq($._expression, "?", $._expression, ":", $._expression)),
+      prec.left(6, seq($._expression, "?", $._expression, ":", $._expression)),
 
     // any kind of statement
     _statement: ($) =>
@@ -168,16 +211,18 @@ module.exports = grammar({
     // /{allPaths=**}
     path: ($) => repeat1($.path_segment),
 
+    path_interpolation: ($) => seq("$(", $._expression, ")"),
+
     path_segment: ($) =>
       choice(
         seq("/", $.segment_identifier),
         seq("/", "{", $.segment_identifier, optional("=**"), "}"),
-        seq("/", "(", $.segment_identifier, ")"),
-        seq("/", "$(", $._expression, ")"),
+        $.path_interpolation,
       ),
 
     // primitive types
-    _primitives: ($) => choice($.string, $.number, $.boolean, $.list, $.map),
+    primitives: ($) =>
+      choice($.string, $.number, $.boolean, $.list, $.map, $.null),
 
     // "string"
     string: ($) => /'[^']*'|"[^"]*"/,
@@ -193,6 +238,9 @@ module.exports = grammar({
     // []
     // [1, 2, 3]
     list: ($) => seq("[", optional($._list), "]"),
+
+    // null
+    null: ($) => "null",
 
     // {}
     // {"a":1, "b":2 }
