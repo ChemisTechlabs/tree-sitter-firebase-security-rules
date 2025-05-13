@@ -1,9 +1,9 @@
 {
   "name": "tree-sitter-firebase-rules",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Firebase Security Rules Grammar",
   "repository": "https://github.com/chemistechlabs/tree-sitter-firebase-security-rules",
-  "license": "BSD-2-Clause",
+  "license": "BSD-3-Clause",
   "author": {
     "name": "Guilherme Caldas",
     "email": "gcaldas@chemis.tech",
