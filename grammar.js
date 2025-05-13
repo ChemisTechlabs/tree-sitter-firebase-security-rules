@@ -9,7 +9,6 @@
 module.exports = grammar({
   name: "firebase_rules",
   extras: ($) => [$.comment, /\s/],
-  conflicts: ($) => [[$._expression, $.access_expression]],
   rules: {
     source_file: ($) => seq($.version_definition, $.service_definition),
 
@@ -38,9 +37,9 @@ module.exports = grammar({
     // function myFunction(param1, param2) { ... }
     // function test() { ... }
     function_definition: ($) =>
-      seq("function", $.identifier, $.parameters_list, $.function_block),
+      seq("function", $.identifier, $.argument_list, $.function_block),
 
-    parameters_list: ($) => seq("(", optional(choice($._list, $.path)), ")"),
+    argument_list: ($) => seq("(", optional($.identifier), ")"),
 
     function_block: ($) => seq("{", repeat1($._statement), "}"),
 
@@ -65,129 +64,120 @@ module.exports = grammar({
 
     // any kind of expression
     _expression: ($) =>
+      prec(
+        13,
+        choice(
+          $.identifier,
+          $.primitives,
+          $.parenthesized_expression,
+          $.index_expression,
+          $.call_expression,
+          $.member_expression,
+          $.unary_expression,
+          $.binary_expression,
+          $.ternary_expression,
+        ),
+      ),
+
+    _boolean_expression: ($) =>
       choice(
+        $._unary_boolean,
+        $._binary_boolean,
         $.identifier,
-        $.primitives,
+        $.boolean,
         $.parenthesized_expression,
         $.index_expression,
         $.call_expression,
-        $.access_expression,
-        $.unary_expression,
-        $.binary_expression,
+        $.member_expression,
         $.ternary_expression,
       ),
 
+    _non_boolean_expression: ($) =>
+      prec(
+        2,
+        choice(
+          $._unary_non_boolean,
+          $._binary_non_boolean,
+          $.identifier,
+          $.primitives,
+          $.parenthesized_expression,
+          $.index_expression,
+          $.call_expression,
+          $.member_expression,
+          $.ternary_expression,
+        ),
+      ),
+
     // (1 + 1)
-    // ((i + 2) + 3)
-    parenthesized_expression: ($) => prec(18, seq("(", $._expression, ")")),
+    parenthesized_expression: ($) => seq("(", $._expression, ")"),
 
     // list[index]
-    // list[1]
     index_expression: ($) =>
-      prec.left(15, seq($._expression, "[", $._expression, "]")),
+      seq($._expression, "[", choice($._expression, $.range_expression), "]"),
+
+    range_expression: ($) => seq($._range_item, ":", $._range_item),
+
+    _range_item: ($) =>
+      choice(
+        $.number,
+        $.identifier,
+        $.call_expression,
+        $.parenthesized_expression,
+        $.member_expression,
+      ),
 
     // call()
-    call_expression: ($) =>
-      prec.left(19, choice($._expression, choice($.parameters_list))),
+    call_expression: ($) => seq($.identifier, $.parameter_list),
+    parameter_list: ($) => seq("(", optional(choice($._list, $.path)), ")"),
 
     // foo.bar
     // foo.call()
     // foo.bar[0].call()
     // call().foo
-    access_expression: ($) =>
+    member_expression: ($) =>
       prec.left(
-        16,
+        14,
         seq(
-          choice(
-            $.identifier,
-            $.primitives,
-            $.parenthesized_expression,
-            $.index_expression,
-            $.call_expression,
-          ),
-          repeat1(
-            seq(
-              ".",
-              choice($.identifier, $.index_expression, $.call_expression),
-            ),
-          ),
+          $._expression,
+          ".",
+          choice($.identifier, $.call_expression, $.index_expression),
         ),
       ),
 
     // !foo()
     // -10
-    unary_expression: ($) =>
-      prec.left(14, choice(seq("!", $._expression), seq("-", $._expression))),
+    unary_expression: ($) => choice($._unary_boolean, $._unary_non_boolean),
+
+    _unary_boolean: ($) => prec.left(12, seq("!", $._expression)),
+    _unary_non_boolean: ($) => prec.left(12, seq("-", $._expression)),
 
     // 1 * 2
     // foo > bar
     // a && b
-    binary_expression: ($) =>
+    binary_expression: ($) => choice($._binary_boolean, $._binary_non_boolean),
+
+    _binary_non_boolean: ($) =>
       choice(
-        $.multiplicative_operation,
-        $.additive_operation,
-        $.relational_operation,
-        $.existence_operation,
-        $.type_operation,
-        $.comparison_operation,
-        $.conditional_and_operation,
-        $.conditional_or_operation,
+        prec.left(10, seq($._expression, choice("*", "/", "%"), $._expression)),
+        prec.left(9, seq($._expression, choice("+", "-"), $._expression)),
       ),
 
-    multiplicative_operation: ($) =>
-      prec.left(
-        13,
-        choice(
-          seq($._expression, "/", $._expression),
-          seq($._expression, "%", $._expression),
-          seq($._expression, "*", $._expression),
+    _binary_boolean: ($) =>
+      choice(
+        prec.left(
+          8,
+          seq($._expression, choice(">", ">=", "<", "<="), $._expression),
         ),
+        prec.left(7, seq($._expression, choice("==", "!="), $._expression)),
+        prec.left(6, seq($._expression, "in", $._non_boolean_expression)),
+        prec.left(5, seq($._expression, "is", $.type)),
+        prec.left(4, seq($._expression, "&&", $._expression)),
+        prec.left(3, seq($._expression, "||", $._expression)),
       ),
-
-    additive_operation: ($) =>
-      prec.left(
-        12,
-        choice(
-          seq($._expression, "+", $._expression),
-          seq($._expression, "-", $._expression),
-        ),
-      ),
-
-    relational_operation: ($) =>
-      prec.left(
-        11,
-        choice(
-          seq($._expression, ">", $._expression),
-          seq($._expression, ">=", $._expression),
-          seq($._expression, "<", $._expression),
-          seq($._expression, "<=", $._expression),
-        ),
-      ),
-
-    existence_operation: ($) =>
-      prec.left(9, choice(seq($._expression, "in", $._expression))),
-
-    type_operation: ($) =>
-      prec.left(9, choice(seq($._expression, "is", $._type))),
-
-    comparison_operation: ($) =>
-      prec.left(
-        10,
-        choice(
-          seq($._expression, "==", $._expression),
-          seq($._expression, "!=", $._expression),
-        ),
-      ),
-
-    conditional_and_operation: ($) =>
-      prec.left(8, choice(seq($._expression, "&&", $._expression))),
-
-    conditional_or_operation: ($) =>
-      prec.left(7, choice(seq($._expression, "||", $._expression))),
 
     // foo == true ? x() : y()
     ternary_expression: ($) =>
-      prec.left(6, seq($._expression, "?", $._expression, ":", $._expression)),
+      prec.left(2, seq($._expression, "?", $._expression, ":", $._expression)),
 
     // any kind of statement
     _statement: ($) =>
@@ -211,13 +201,12 @@ module.exports = grammar({
     // /{allPaths=**}
     path: ($) => repeat1($.path_segment),
 
-    path_interpolation: ($) => seq("$(", $._expression, ")"),
-
     path_segment: ($) =>
       choice(
         seq("/", $.segment_identifier),
         seq("/", "{", $.segment_identifier, optional("=**"), "}"),
-        $.path_interpolation,
+        seq("/", "$(", $._expression, ")"),
+        seq("/", "(", $.segment_identifier, ")"),
       ),
 
     // primitive types
@@ -225,22 +214,22 @@ module.exports = grammar({
       choice($.string, $.number, $.boolean, $.list, $.map, $.null),
 
     // "string"
-    string: ($) => /'[^']*'|"[^"]*"/,
+    string: () => /'[^']*'|"[^"]*"/,
 
     // 1
     // 2.1
-    number: ($) => /(\d+|\d+\.\d+)/,
+    number: () => /(\d+|\d+\.\d+)/,
 
     // true
     // false
-    boolean: ($) => choice("true", "false"),
+    boolean: () => choice("true", "false"),
 
     // []
     // [1, 2, 3]
     list: ($) => seq("[", optional($._list), "]"),
 
     // null
-    null: ($) => "null",
+    null: () => "null",
 
     // {}
     // {"a":1, "b":2 }
@@ -265,7 +254,7 @@ module.exports = grammar({
     // a, b, c
     _list: ($) => seq($._expression, repeat(seq(",", $._expression))),
 
-    _type: ($) =>
+    type: () =>
       choice(
         "bool",
         "int",
@@ -280,11 +269,11 @@ module.exports = grammar({
         "latlng",
       ),
 
-    service_name: ($) => choice("cloud.firestore", "firebase.storage"),
+    service_name: () => choice("cloud.firestore", "firebase.storage"),
 
-    segment_identifier: ($) => prec(0, /[a-zA-Z\s\-\_\.]+/),
-    identifier: ($) => prec(0, /[a-zA-Z_][a-zA-Z0-9_]*/),
-    comment: ($) =>
+    segment_identifier: () => prec(0, /[a-zA-Z\s\-\_\.]+/),
+    identifier: () => prec(0, /[a-zA-Z_][a-zA-Z0-9_]*/),
+    comment: () =>
       token(
         choice(seq("//", /.*/), seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")),
       ),
